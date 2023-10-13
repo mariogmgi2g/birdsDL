@@ -1,0 +1,243 @@
+import os
+import requests
+from scrapy.selector import Selector
+from concurrent import futures
+import multiprocessing as mp
+
+
+class BirdAudioScraper:
+    def __init__(self) -> None:
+        basic_url = 'https://www.bird-sounds.net'
+        self.__basic_url = basic_url
+        alphabetical_url = basic_url + '/alphabetical'
+        self.__header = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
+            'Upgrade-Insecure-Requests': '1',
+            'Accept-Language': 'es-ES,es;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7'
+        }
+        if not os.path.exists('./data/birds audio/'): os.mkdir('./data/birds audio/')
+        self.__basic_response = Selector(
+            requests.get(alphabetical_url, headers=self.__header))
+        self.__data_path = './data/'
+        self.__poss_conservation_status = ['least concern', 'threatened', 'extinct']
+
+
+    def __get_birds_hrefs(self) -> list:
+        all_urls = self.__basic_response\
+            .xpath('//div[@class="bird-outer"]/a/@href').getall()
+        return all_urls
+
+
+    def __generate_bird_name(bird_href:str) -> str:
+        bird_href = bird_href.replace('-', ' ')
+        bird_href = bird_href.replace('/', '')
+        return bird_href
+
+
+    def get_all_bird_names(self) -> list:
+        all_urls = self.__get_birds_hrefs()
+        all_names = [
+            BirdAudioScraper.__generate_bird_name(bird) 
+            for bird in all_urls]
+        return all_names
+
+    # ------------------------------------------------------------------------ #
+    def __scrap_bird_audio(self, bird_name, url, audio_extension) -> None:
+        audio = requests.get(url, headers=self.__header)
+        folder_path = self.__data_path + 'birds audio/' + bird_name
+        file = 'call.' + audio_extension 
+        # Cambiar por lo que refleja exactamente el audio
+        if not os.path.exists(folder_path):
+            os.mkdir(folder_path)
+        with open(folder_path + '/' + file, 'wb') as f:
+            f.write(audio.content)
+
+
+    def __href_bird_tracks(objeto, sub_href):
+        try:
+            session = requests.Session()
+            href = objeto.__basic_url + '/' + sub_href
+            response = Selector(session.get(href, headers=objeto.__header))
+            sub_audio = response.xpath(
+                '//audio[@id="birdaudio"]/source/@src').get()
+            audio_extension =  response.xpath(
+                '//audio[@id="birdaudio"]/source/@type').get()
+            audio_extension = audio_extension.split('/')[-1]
+            audio_type = response.xpath(
+                '//audio[@id="birdaudio"]/source/@src').getall()
+            if len(audio_type) > 1:
+                raise ValueError(f'Más de dos pestañas en {href}')
+            audio_url = objeto.__basic_url + '/' + sub_audio
+            bird_name = BirdAudioScraper.__generate_bird_name(sub_href)
+            print(f'Downloading {bird_name} audio...')
+            objeto.__scrap_bird_audio(bird_name, audio_url, audio_extension)
+            print(f"The {bird_name}'s audio has been succesfully downloaded")
+        except:
+            pass
+
+
+    def get_birds_audio(self):
+        n_cores = mp.cpu_count()
+        print(self.__get_birds_hrefs())
+        with futures.ThreadPoolExecutor(max_workers=n_cores) as exe:
+            threads = [
+                exe.submit(
+                BirdAudioScraper.__href_bird_tracks, self, sub_href)
+                for sub_href in self.__get_birds_hrefs()]
+    
+    
+    def __get_url_wikipedia(bird_name:str) -> str:
+        basic_url = 'http://en.wikipedia.org/wiki/'
+        words = bird_name.split(' ')
+        new_words = []
+        len_words = len(words)
+        for word, i in zip(words, range(len_words)):
+            word = word.lower()
+            if i == 0: word = word.capitalize()
+            if (i == (len_words - 2)) & word.endswith('s'): word = word[:-1] + r'%27s'
+            new_words.append(word)
+        url = basic_url + '_'.join(new_words) # + '.com'
+        return url
+    
+
+    def __scrap_wiki_data(self, response):
+        biota_table = response.xpath('//table[@class="infobox biota"]')#.get()
+
+        conservation_status = biota_table.xpath(
+            './/td[@colspan="2"]//a/text()').getall()
+        conservation_status = [
+            el for el in conservation_status 
+            if el.lower() in self.__poss_conservation_status][0]
+        classification = biota_table.xpath(
+            './/tr//a/text()').getall()
+        conservation_status = conservation_status
+
+
+    def get_wiki_bird_info(self): # Prototipo de wikipedia, no usar
+        try:
+            bird_names = os.listdir('./data/birds audio/')
+            for bird_name in bird_names:
+                url = BirdAudioScraper.__get_url_wikipedia(bird_name)
+                response = Selector(requests.get(url))
+                bird_info = self.__scrap_wiki_data(response)
+        except:
+            raise FileNotFoundError
+        
+
+class BirdWebScraper():
+    def __init__(self) -> None:
+        self.__basic_url = 'https://www.allaboutbirds.org/' 
+        self.__list_birds = os.listdir('./data/birds audio')
+        self.__header_web = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Encoding': 'gzip',
+            'Accept-Language': 'es-ES,es;q=0.9',
+            'Referer': 'https://www.allaboutbirds.org/guide/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
+        }
+        self.__header_img = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'es-ES,es;q=0.9',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Sec-Ch-Ua': '"Chromium";v="116", "Not)A;Brand";v="24", "Opera GX";v="102"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-User': '?1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
+        }
+
+
+    def __search_for_coincidences(basic_url:str, bird:str, header:dict):
+        bird = bird.replace(' ', '%20')
+        url = basic_url + f'news/search/?q={bird}'
+        results_xpath = './/div[@id="species-search-results"]//li[@class="article-item"]'
+        href_attribute = '//a[@class="article-item-link"]/@href'
+        response = requests.get(url, headers=header)
+        response = Selector(response)
+        elements = response.xpath(results_xpath + href_attribute).getall()
+        if len(elements) > 0:
+            bird_href = elements[0]
+            return bird_href
+        else:
+            raise LookupError(f'Bird {bird} has not been found')
+        
+
+    def __get_xpath_bird(href:str, header:dict):
+        response = requests.get(href, headers=header)
+        status = response.status_code
+        if status == 200:
+            main_response = Selector(response)
+            hrefs = main_response.xpath('//nav[@class="species-nav"]/ul/li/a/@href').getall()
+            href_id = ''
+            for href in hrefs:
+                href_id = href if href.split('/')[-1] == 'id' else href_id
+            href_id = f'https://www.allaboutbirds.org{href_id}'
+            response = requests.get(href_id, headers=header)
+            return Selector(requests.get(href_id, headers=header))
+        else:
+            raise ConnectionRefusedError(f'{href} not ok, status code {status}')
+
+
+    def __scrap_bird_data(response, header:dict, bird:str):
+        keywords = ['Size & Shape', 'Measurements', 
+                    'Color Pattern', 'Behavior', 'Habitat']
+        texts = response.xpath('.//article//p/text()').getall()
+        imgs = response.xpath('.//aside//img/@data-interchange').getall()
+
+        text_path = f'./data/birds texts/{bird}/'
+        if not os.path.exists('./data/birds texts/'): os.mkdir('./data/birds texts/')
+        if not os.path.exists(text_path): os.mkdir(text_path)
+        imgs_path = f'./data/birds imgs/{bird}/'
+        if not os.path.exists('./data/birds imgs/') : os.mkdir('./data/birds imgs/')
+        if not os.path.exists(imgs_path) : os.mkdir(imgs_path)
+
+        if len(os.listdir(text_path)) == 0:
+            text = dict(zip(keywords, texts))
+            text = str(text).replace("'", '"')
+            with open(text_path + 'info.json', 'w') as f:
+                f.write(text)
+
+        if len(os.listdir(imgs_path)) == 0:
+            for i, img_list in enumerate(imgs):
+                try:
+                    img = str(img_list).split("[")[-1].split(',')[0]
+                    extension = img.split('.')[-1]
+                    res = requests.get(img, headers=header)
+                    if res.status_code == 200:
+                        with open(imgs_path + f'img_{i}.{extension}', 'wb') as f:
+                            f.write(res.content)
+                except Exception as e: raise e
+
+    
+    def __digest_for_parallelization(bird, basic_url, header_web, header_img):
+        print(f'Downloading {bird} data...')
+        # try:
+        href = BirdWebScraper.__search_for_coincidences(basic_url, bird, header_web)
+        response = BirdWebScraper.__get_xpath_bird(href, header_web)
+        BirdWebScraper.__scrap_bird_data(response, header_img, bird)
+        print(f"The {bird}'s data has been succesfully downloaded")
+        # except:
+        #     pass
+
+
+    def get_birds_info(self):
+        n_cores = mp.cpu_count()
+        with futures.ThreadPoolExecutor(max_workers=n_cores) as exe:
+            threads = [
+                exe.submit(
+                BirdWebScraper.__digest_for_parallelization, 
+                bird, self.__basic_url, self.__header_web, self.__header_img)
+                for bird in self.__list_birds]
+            
+
+if __name__ == '__main__':
+    audio_scraper = BirdAudioScraper()
+    audio_scraper.get_birds_audio()
+    info_scraper = BirdWebScraper()
+    info_scraper.get_birds_info()

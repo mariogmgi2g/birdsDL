@@ -1,2 +1,4 @@
-data/
+data/birds audio/
+data/birds texts/
+data/birds imgs/
 .venv/
